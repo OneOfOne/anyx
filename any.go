@@ -2,23 +2,25 @@ package any
 
 import (
 	"encoding/json"
-	"log"
+	"fmt"
 	"reflect"
 	"strconv"
 	"time"
 )
+
+type A = interface{}
 
 var (
 	DefaultTimeLayouts      = [...]string{time.RFC3339Nano, time.RFC1123, time.RFC1123Z}
 	DefaultShortTimeLayouts = [...]string{"2006-01-02", "2006/01/02"}
 )
 
-func Value(v interface{}) (a Any) {
+func Value(v A) (a Any) {
 	a.Set(v)
 	return
 }
 
-func Slice(vals ...interface{}) (a Any) {
+func Slice(vals ...A) (a Any) {
 	v := make([]Any, 0, len(vals))
 	for _, a := range vals {
 		v = append(v, Value(a))
@@ -28,7 +30,7 @@ func Slice(vals ...interface{}) (a Any) {
 }
 
 // Map returns Any map[string]Any using pairs of (key.(string), val).
-func Map(pairs ...interface{}) (a Any) {
+func Map(pairs ...A) (a Any) {
 	if len(pairs) == 0 {
 		return
 	}
@@ -44,7 +46,7 @@ func Map(pairs ...interface{}) (a Any) {
 }
 
 type Any struct {
-	v interface{}
+	v A
 }
 
 // Len returns the length of the underlying map/slice.
@@ -66,7 +68,7 @@ func (a Any) Len() int {
 	return -1
 }
 
-func (a Any) ForEach(fn func(key interface{}, value Any) (exit bool)) {
+func (a Any) ForEach(fn func(key A, value Any) (exit bool)) {
 	switch v := a.v.(type) {
 	case []Any:
 		for i := range v {
@@ -102,7 +104,7 @@ func (a Any) ForEach(fn func(key interface{}, value Any) (exit bool)) {
 
 // Get will nest for all the given keys, for example:
 // Map("key", Slice(1, Map("key", Slice(42)), 3)).Get("key", 1, "key", 0).Int() === 42
-func (a Any) Get(keys ...interface{}) (_ Any) {
+func (a Any) Get(keys ...A) (_ Any) {
 	for _, key := range keys {
 		switch v := a.v.(type) {
 		case []Any:
@@ -119,6 +121,54 @@ func (a Any) Get(keys ...interface{}) (_ Any) {
 	}
 
 	return a
+}
+
+func (a Any) Has(key A) bool {
+	switch v := a.v.(type) {
+	case map[string]Any:
+		_, ok := v[key.(string)]
+		return ok
+	case reflect.Value:
+		v = reflect.Indirect(v)
+		switch v.Kind() {
+		case reflect.Map:
+			return v.MapIndex(reflect.ValueOf(key)).IsValid()
+		case reflect.Struct:
+			return v.FieldByName(key.(string)).IsValid()
+		}
+	}
+
+	return false
+}
+
+func (a Any) Keys() (out []A) {
+	switch v := a.v.(type) {
+	case map[string]Any:
+		out = make([]A, 0, len(v))
+		for k := range v {
+			out = append(out, k)
+		}
+	case reflect.Value:
+		v = reflect.Indirect(v)
+		switch v.Kind() {
+		case reflect.Map:
+			mk := v.MapKeys()
+			out = make([]A, 0, len(mk))
+			for i := range mk {
+				out = append(out, mk[i].Interface())
+			}
+		case reflect.Struct:
+			t := v.Type()
+			out = make([]A, 0, t.NumField())
+			for i := 0; i < cap(out); i++ {
+				if f := t.Field(i); f.Name != "" {
+					out = append(out, f.Name)
+				}
+			}
+		}
+	}
+
+	return
 }
 
 func (a Any) String() string {
@@ -141,6 +191,8 @@ func (a Any) Int() int64 {
 	switch v := a.v.(type) {
 	case json.RawMessage:
 		s = trim(v)
+	case json.Number:
+		s = string(v)
 	case int64:
 		return v
 	case reflect.Value:
@@ -173,6 +225,8 @@ func (a Any) Uint() uint64 {
 	switch v := a.v.(type) {
 	case json.RawMessage:
 		s = trim(v)
+	case json.Number:
+		s = string(v)
 	case uint64:
 		return v
 	case reflect.Value:
@@ -204,6 +258,8 @@ func (a Any) Float() float64 {
 	switch v := a.v.(type) {
 	case json.RawMessage:
 		s = trim(v)
+	case json.Number:
+		s = string(v)
 	case float64:
 		return v
 	case reflect.Value:
@@ -235,6 +291,8 @@ func (a Any) Bool() bool {
 	switch v := a.v.(type) {
 	case json.RawMessage:
 		s = trim(v)
+	case string:
+		s = v
 	case bool:
 		return v
 	case reflect.Value:
@@ -263,6 +321,8 @@ func (a Any) IsNumber() bool {
 	switch v := a.v.(type) {
 	case json.RawMessage:
 		s = trim(v)
+	case json.Number:
+		s = string(v)
 	case int64, uint64, float64:
 		return true
 	case reflect.Value:
@@ -318,7 +378,7 @@ func (a Any) Time(layouts ...string) (t time.Time) {
 	return
 }
 
-func (a *Any) Append(val interface{}) {
+func (a *Any) Append(val A) {
 	if a.v == nil || a.Type() != "slice" {
 		a.v = []Any{}
 	}
@@ -331,7 +391,7 @@ func (a *Any) Append(val interface{}) {
 	}
 }
 
-func (a *Any) SetAt(idx int, val interface{}) {
+func (a *Any) SetAt(idx int, val A) {
 	if a.v == nil || a.Type() != "slice" {
 		a.v = make([]Any, idx+1)
 	}
@@ -344,7 +404,7 @@ func (a *Any) SetAt(idx int, val interface{}) {
 	}
 }
 
-func (a *Any) SetKeyVal(key, val interface{}) {
+func (a *Any) SetKeyVal(key, val A) {
 	if a.v == nil || a.Type() != "map" {
 		a.v = map[string]Any{}
 	}
@@ -358,7 +418,7 @@ func (a *Any) SetKeyVal(key, val interface{}) {
 }
 
 // Set sets the current Any to the given value.
-func (a *Any) Set(v interface{}) {
+func (a *Any) Set(v A) {
 	switch v := v.(type) {
 	case nil:
 		a.v = nil
@@ -402,6 +462,8 @@ func (a *Any) set(rv reflect.Value) {
 
 func (a Any) Type() string {
 	switch v := a.v.(type) {
+	case json.Number:
+		return "number"
 	case reflect.Value:
 		return v.Kind().String()
 	case nil:
@@ -415,7 +477,7 @@ func (a Any) IsNil() bool {
 	return a.v == nil
 }
 
-func (a Any) Raw() interface{} {
+func (a Any) Raw() A {
 	return a.v
 }
 
@@ -434,6 +496,8 @@ func (a *Any) UnmarshalJSON(b []byte) (err error) {
 	}
 
 	switch b[0] {
+	case '"':
+		a.v = string(b[1 : len(b)-1])
 	case '[':
 		var v []Any
 		err = json.Unmarshal(b, &v)
@@ -442,8 +506,14 @@ func (a *Any) UnmarshalJSON(b []byte) (err error) {
 		var v map[string]Any
 		err = json.Unmarshal(b, &v)
 		a.v = v
+	case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-', '+', '.':
+		a.v = json.Number(b)
+	case 't', 'T':
+		a.v = true
+	case 'f', 'F':
+		a.v = false
 	default:
-		var v interface{}
+		var v A
 		err = json.Unmarshal(b, &v)
 		a.Set(v)
 	}
@@ -461,6 +531,18 @@ func (a Any) MarshalJSON() ([]byte, error) {
 	return json.Marshal(a.v)
 }
 
+func (a Any) Format(s fmt.State, c rune) {
+	if s.Flag('+') {
+		flag := "%v"
+		if s.Flag('#') {
+			flag = "%+v"
+		}
+		fmt.Fprintf(s, "Any{%s: "+flag+"}", a.Type(), a.v)
+	} else {
+		fmt.Fprintf(s, "%v", a.v)
+	}
+}
+
 func trim(b []byte) string {
 	if len(b) > 2 && b[0] == '"' && b[len(b)-1] == '"' {
 		b = b[1 : len(b)-1]
@@ -468,7 +550,7 @@ func trim(b []byte) string {
 	return string(b)
 }
 
-func indexReflect(v interface{}, keyOrIndex interface{}) interface{} {
+func indexReflect(v A, keyOrIndex A) A {
 	var rv, ov reflect.Value
 
 	if v, ok := v.(reflect.Value); ok {
@@ -486,7 +568,6 @@ func indexReflect(v interface{}, keyOrIndex interface{}) interface{} {
 	case reflect.Struct:
 		s, _ := keyOrIndex.(string)
 		if f := rv.FieldByName(s); f.IsValid() {
-			log.Printf("%#+v %v %s", v, keyOrIndex, f)
 			ov = f
 		}
 	}
