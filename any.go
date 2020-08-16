@@ -68,6 +68,8 @@ func (a Any) Len() int {
 	return -1
 }
 
+// ForEach will loop through slices, arrays (key will be the index, int), maps or structs
+// Note that on a struct, it will skip zero-valued fields (0, "", nil)
 func (a Any) ForEach(fn func(key A, value Any) (exit bool)) {
 	switch v := a.v.(type) {
 	case []Any:
@@ -95,6 +97,22 @@ func (a Any) ForEach(fn func(key A, value Any) (exit bool)) {
 		case reflect.Map:
 			for it := v.MapRange(); it.Next(); {
 				if fn(it.Key().Interface(), Value(it.Value())) {
+					return
+				}
+			}
+		case reflect.Struct:
+			t := v.Type()
+			for i := 0; i < t.NumField(); i++ {
+				kf := t.Field(i)
+				n := kf.Name
+				if kf.Anonymous {
+					n = kf.Type.Name()
+				}
+				v := v.Field(i)
+				if v.IsZero() {
+					continue
+				}
+				if fn(n, Value(v)) {
 					return
 				}
 			}
@@ -171,7 +189,9 @@ func (a Any) Keys() (out []A) {
 	return
 }
 
-func (a Any) String() string {
+// String returns the string of the underlying Any
+// if always is true, it'll call fmt.Sprint
+func (a Any) String(always bool) string {
 	switch v := a.v.(type) {
 	case json.RawMessage:
 		return trim(v)
@@ -181,8 +201,14 @@ func (a Any) String() string {
 		if v.Kind() == reflect.String {
 			return v.String()
 		}
+		if always {
+			return fmt.Sprint(v.Interface())
+		}
 	}
 
+	if always {
+		return fmt.Sprint(a.v)
+	}
 	return ""
 }
 
@@ -195,6 +221,10 @@ func (a Any) Int() int64 {
 		s = string(v)
 	case int64:
 		return v
+	case uint64:
+		return int64(v)
+	case float64:
+		return int64(v)
 	case reflect.Value:
 		switch v.Kind() {
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
@@ -229,6 +259,10 @@ func (a Any) Uint() uint64 {
 		s = string(v)
 	case uint64:
 		return v
+	case int64:
+		return uint64(v)
+	case float64:
+		return uint64(v)
 	case reflect.Value:
 		switch v.Kind() {
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
@@ -262,6 +296,10 @@ func (a Any) Float() float64 {
 		s = string(v)
 	case float64:
 		return v
+	case uint64:
+		return float64(v)
+	case int64:
+		return float64(v)
 	case reflect.Value:
 		switch v.Kind() {
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
@@ -295,6 +333,12 @@ func (a Any) Bool() bool {
 		s = v
 	case bool:
 		return v
+	case float64:
+		return v != 0
+	case uint64:
+		return v != 0
+	case int64:
+		return v != 0
 	case reflect.Value:
 		switch v.Kind() {
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
@@ -339,6 +383,7 @@ func (a Any) IsNumber() bool {
 	if len(s) == 0 {
 		return false
 	}
+
 	switch s[0] {
 	case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-', '+':
 		return true
@@ -348,18 +393,25 @@ func (a Any) IsNumber() bool {
 }
 
 func (a Any) Time(layouts ...string) (t time.Time) {
-	if t, _ = a.v.(time.Time); !t.IsZero() {
+	const ms = int64(1e12)
+	const ns = int64(1e18)
+
+	var ok bool
+	if t, ok = a.v.(time.Time); ok {
 		return
 	}
-	const ms = 10000000000
+
 	if n := a.Int(); n > 0 {
+		if n > ns {
+			return time.Unix(0, n)
+		}
 		if n > ms {
 			n /= 1000 // js date
 		}
 		return time.Unix(n, 0)
 	}
 
-	if s := a.String(); s != "" {
+	if s := a.String(false); s != "" {
 		if len(layouts) == 0 {
 			if len(s) == 10 {
 				layouts = DefaultShortTimeLayouts[:]
