@@ -1,3 +1,3 @@
-module github.com/OneOfOne/any
+module go.oneofone.dev/anyx
 
 go 1.14
