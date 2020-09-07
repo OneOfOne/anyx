@@ -1,4 +1,4 @@
-package anyx
+package anyx // import "go.oneofone.dev/anyx"
 
 import (
 	"encoding/json"
