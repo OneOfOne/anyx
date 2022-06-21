@@ -1,5 +1,0 @@
-{
-	"go.toolsEnvVars": {
-		"GOFLAGS":"-tags=go2"
-	}
-}
